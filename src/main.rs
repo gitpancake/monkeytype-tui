@@ -33,22 +33,34 @@ async fn main() -> Result<()> {
         None => test::Mode::Time(args.time),
     };
 
-    let result = ui::run(mode)?;
+    let mut initial: Option<test::TestResult> = None;
+    let mut sync_status: Option<String> = None;
 
-    println!(
-        "wpm {:.1}  raw {:.1}  acc {:.1}%  consistency {:.1}%  time {:.1}s",
-        result.wpm, result.raw_wpm, result.accuracy, result.consistency, result.test_duration
-    );
-
-    if args.no_sync {
-        return Ok(());
-    }
-    match cfg.ape_key.as_deref() {
-        Some(key) => match api::submit_result(key, &result).await {
-            Ok(id) => println!("synced: {id}"),
-            Err(e) => eprintln!("sync failed: {e}"),
-        },
-        None => eprintln!("no MONKEYTYPE_APE_KEY set — skipping sync"),
+    loop {
+        let outcome = ui::run(mode, initial.take(), sync_status.as_deref())?;
+        match outcome {
+            ui::Outcome::Quit => break,
+            ui::Outcome::Replay => {
+                sync_status = None;
+            }
+            ui::Outcome::Sync(result) => {
+                if args.no_sync {
+                    sync_status = Some("sync disabled (--no-sync)".into());
+                } else {
+                    match cfg.ape_key.as_deref() {
+                        Some(key) => match api::submit_result(key, &result).await {
+                            Ok(id) => sync_status = Some(format!("synced: {id}")),
+                            Err(e) => sync_status = Some(format!("sync failed: {e}")),
+                        },
+                        None => {
+                            sync_status =
+                                Some("no MONKEYTYPE_APE_KEY set — cannot sync".into());
+                        }
+                    }
+                }
+                initial = Some(result);
+            }
+        }
     }
     Ok(())
 }
